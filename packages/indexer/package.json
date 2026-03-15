@@ -1,0 +1,26 @@
+{
+  "name": "@stellar-nft-marketplace/indexer",
+  "version": "0.1.0",
+  "description": "Node.js event indexer for Stellar NFT marketplace",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "migrate": "ts-node src/database/migrate.ts",
+    "clean": "rimraf dist"
+  },
+  "dependencies": {
+    "@stellar/stellar-sdk": "^11.0.0",
+    "sqlite3": "^5.1.6",
+    "dotenv": "^16.3.1",
+    "ws": "^8.14.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/ws": "^8.5.8",
+    "typescript": "^5.0.0",
+    "ts-node": "^10.9.1",
+    "rimraf": "^5.0.5"
+  }
+}

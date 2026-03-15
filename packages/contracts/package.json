@@ -1,0 +1,16 @@
+{
+  "name": "@stellar-nft-marketplace/contracts",
+  "version": "0.1.0",
+  "description": "Soroban smart contracts for Stellar NFT marketplace",
+  "scripts": {
+    "build": "cargo build --release --target wasm32-unknown-unknown",
+    "test": "cargo test",
+    "deploy:testnet": "soroban contract deploy --wasm target/wasm32-unknown-unknown/release/stellar_nft_marketplace_contracts.wasm --source-account testnet --network testnet",
+    "deploy:nft": "soroban contract invoke --id $NFT_CONTRACT_ID --source-account testnet --network testnet -- initialize --admin $ADMIN_ADDRESS",
+    "deploy:marketplace": "soroban contract invoke --id $MARKETPLACE_CONTRACT_ID --source-account testnet --network testnet -- initialize --admin $ADMIN_ADDRESS",
+    "clean": "cargo clean"
+  },
+  "devDependencies": {
+    "soroban-cli": "^20.0.0"
+  }
+}

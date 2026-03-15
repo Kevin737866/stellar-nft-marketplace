@@ -1,0 +1,35 @@
+{
+  "name": "stellar-nft-marketplace",
+  "version": "1.0.0",
+  "description": "Complete NFT marketplace on Stellar blockchain using Soroban smart contracts",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "pnpm -r build",
+    "dev": "pnpm -r --parallel dev",
+    "test": "pnpm -r test",
+    "clean": "pnpm -r clean",
+    "lint": "pnpm -r lint",
+    "type-check": "pnpm -r type-check",
+    "contracts:build": "pnpm --filter contracts build",
+    "contracts:test": "pnpm --filter contracts test",
+    "contracts:deploy:testnet": "pnpm --filter contracts deploy:testnet",
+    "frontend:dev": "pnpm --filter frontend dev",
+    "frontend:build": "pnpm --filter frontend build",
+    "indexer:start": "pnpm --filter indexer start",
+    "indexer:migrate": "pnpm --filter indexer migrate"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0",
+    "prettier": "^3.0.0",
+    "eslint": "^8.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "pnpm": ">=8.0.0"
+  },
+  "packageManager": "pnpm@8.15.0"
+}
