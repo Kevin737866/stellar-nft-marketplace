@@ -9,6 +9,6 @@ fn main() {
     let admin = Address::from_string(&String::from_str(&env, "GD..."));
     NFTContract::initialize(&env, admin.clone());
     
-    println!("NFT Contract deployed at: {}", contract_id);
-    println!("Admin: {}", admin);
+    println!("NFT Contract deployed at: {:?}", contract_id);
+    println!("Admin: {:?}", admin);
 }

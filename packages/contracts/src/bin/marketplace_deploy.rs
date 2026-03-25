@@ -9,6 +9,6 @@ fn main() {
     let admin = Address::from_string(&String::from_str(&env, "GD..."));
     MarketplaceContract::initialize(&env, admin.clone());
     
-    println!("Marketplace Contract deployed at: {}", contract_id);
-    println!("Admin: {}", admin);
+    println!("Marketplace Contract deployed at: {:?}", contract_id);
+    println!("Admin: {:?}", admin);
 }
