@@ -1,4 +1,7 @@
-use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, String, Symbol, Vec, Map, token, IntoVal};
+use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, Symbol, Vec, token, IntoVal};
+
+pub const PLATFORM_FEE_BPS: i128 = 250; // 2.5% fee (250 basis points)
+pub const FEE_PRECISION: i128 = 10000;
 
 #[contracttype]
 pub enum MarketplaceDataKey {
@@ -7,6 +10,7 @@ pub enum MarketplaceDataKey {
     ListingsByOwner(Address),
     AllListings,
     NextListingId,
+    ReentrancyGuard,
 }
 
 #[contracttype]
@@ -47,22 +51,30 @@ impl MarketplaceContract {
 
     pub fn list(
         env: Env,
+        seller: Address,
         nft_contract: Address,
         token_id: u32,
         price: i128,
     ) -> u32 {
-        let seller = env.current_contract_address();
+        seller.require_auth();
         
         // Verify the seller owns the NFT
-        let owner = env.invoke_contract(
+        let owner: Address = env.invoke_contract(
             &nft_contract,
             &Symbol::new(&env, "owner_of"),
             (token_id,).into_val(&env),
         );
         
-        if owner != seller.into_val(&env) {
+        if owner != seller {
             panic!("not token owner");
         }
+
+        // Transfer NFT to marketplace contract (escrow)
+        env.invoke_contract::<()>(
+            &nft_contract,
+            &Symbol::new(&env, "transfer_from"),
+            (seller.clone(), seller.clone(), env.current_contract_address(), token_id).into_val(&env),
+        );
 
         let listing_id: u32 = env.storage().instance()
             .get(&MarketplaceDataKey::NextListingId)
@@ -104,8 +116,9 @@ impl MarketplaceContract {
         listing_id
     }
 
-    pub fn buy(env: Env, listing_id: u32) {
-        let buyer = env.current_contract_address();
+    pub fn buy(env: Env, buyer: Address, listing_id: u32) {
+        buyer.require_auth();
+        Self::_enter_reentrancy_guard(env.clone());
         
         let mut listing: Listing = env.storage().instance()
             .get(&MarketplaceDataKey::Listing(listing_id))
@@ -115,15 +128,30 @@ impl MarketplaceContract {
             panic!("listing not active");
         }
 
-        // Transfer XLM from buyer to seller
-        token::Client::new(&env, &env.current_contract_address())
-            .transfer(&buyer, &listing.seller, &listing.price);
+        // Calculate platform fee
+        let platform_fee = (listing.price * PLATFORM_FEE_BPS) / FEE_PRECISION;
+        let seller_amount = listing.price - platform_fee;
+        
+        // Get marketplace admin for fee collection
+        let admin: Address = env.storage().instance()
+            .get(&MarketplaceDataKey::Admin)
+            .unwrap_or_else(|| panic!("admin not set"));
 
-        // Transfer NFT from seller to buyer
-        env.invoke_contract(
+        // Transfer XLM from buyer to seller (minus platform fee)
+        token::Client::new(&env, &env.current_contract_address())
+            .transfer(&buyer, &listing.seller, &seller_amount);
+            
+        // Transfer platform fee to admin
+        if platform_fee > 0 {
+            token::Client::new(&env, &env.current_contract_address())
+                .transfer(&buyer, &admin, &platform_fee);
+        }
+
+        // Transfer NFT from marketplace contract to buyer
+        env.invoke_contract::<()>(
             &listing.nft_contract,
             &Symbol::new(&env, "transfer_from"),
-            (listing.seller.clone(), listing.seller, buyer.clone(), listing.token_id).into_val(&env),
+            (env.current_contract_address(), env.current_contract_address(), buyer.clone(), listing.token_id).into_val(&env),
         );
 
         // Mark listing as inactive
@@ -132,12 +160,14 @@ impl MarketplaceContract {
 
         env.events().publish(
             (Symbol::new(&env, "sale_completed"), listing_id),
-            (listing.nft_contract, listing.token_id, listing.seller, buyer, listing.price),
+            (listing.nft_contract, listing.token_id, listing.seller, buyer, listing.price, platform_fee),
         );
+        
+        Self::_exit_reentrancy_guard(env);
     }
 
-    pub fn delist(env: Env, listing_id: u32) {
-        let seller = env.current_contract_address();
+    pub fn delist(env: Env, seller: Address, listing_id: u32) {
+        seller.require_auth();
         
         let mut listing: Listing = env.storage().instance()
             .get(&MarketplaceDataKey::Listing(listing_id))
@@ -150,6 +180,13 @@ impl MarketplaceContract {
         if !listing.active {
             panic!("listing not active");
         }
+
+        // Return NFT to seller from escrow
+        env.invoke_contract::<()>(
+            &listing.nft_contract,
+            &Symbol::new(&env, "transfer_from"),
+            (env.current_contract_address(), env.current_contract_address(), seller.clone(), listing.token_id).into_val(&env),
+        );
 
         listing.active = false;
         env.storage().instance().set(&MarketplaceDataKey::Listing(listing_id), &listing);
@@ -160,8 +197,8 @@ impl MarketplaceContract {
         );
     }
 
-    pub fn update_price(env: Env, listing_id: u32, new_price: i128) {
-        let seller = env.current_contract_address();
+    pub fn update_price(env: Env, seller: Address, listing_id: u32, new_price: i128) {
+        seller.require_auth();
         
         let mut listing: Listing = env.storage().instance()
             .get(&MarketplaceDataKey::Listing(listing_id))
@@ -173,6 +210,10 @@ impl MarketplaceContract {
 
         if !listing.active {
             panic!("listing not active");
+        }
+
+        if new_price <= 0 {
+            panic!("price must be positive");
         }
 
         listing.price = new_price;
@@ -208,6 +249,32 @@ impl MarketplaceContract {
         listings
     }
 
+    pub fn get_listings(env: Env, start: u32, limit: u32) -> Vec<Listing> {
+        if limit == 0 || limit > 100 {
+            panic!("limit must be between 1 and 100");
+        }
+        
+        let listing_ids: Vec<u32> = env.storage().instance()
+            .get(&MarketplaceDataKey::AllListings)
+            .unwrap_or(Vec::new(&env));
+
+        let mut listings = Vec::new(&env);
+        let end = std::cmp::min(start + limit, listing_ids.len() as u32);
+        
+        for i in start..end {
+            if let Some(listing_id) = listing_ids.get(i) {
+                let listing: Listing = env.storage().instance()
+                    .get(&MarketplaceDataKey::Listing(listing_id))
+                    .unwrap();
+                if listing.active {
+                    listings.push_back(listing);
+                }
+            }
+        }
+        
+        listings
+    }
+
     pub fn get_all_active_listings(env: Env) -> Vec<Listing> {
         let listing_ids: Vec<u32> = env.storage().instance()
             .get(&MarketplaceDataKey::AllListings)
@@ -227,7 +294,7 @@ impl MarketplaceContract {
     }
 
     pub fn get_listings_by_nft(env: Env, nft_contract: Address, token_id: u32) -> Vec<Listing> {
-        let all_listings = Self::get_all_active_listings(env);
+        let all_listings = Self::get_all_active_listings(env.clone());
         let mut filtered_listings = Vec::new(&env);
         
         for listing in all_listings.iter() {
@@ -237,6 +304,18 @@ impl MarketplaceContract {
         }
         
         filtered_listings
+    }
+
+    fn _enter_reentrancy_guard(env: Env) {
+        let guard = env.storage().instance().get::<_, bool>(&MarketplaceDataKey::ReentrancyGuard);
+        if guard.unwrap_or(false) {
+            panic!("reentrancy detected");
+        }
+        env.storage().instance().set(&MarketplaceDataKey::ReentrancyGuard, &true);
+    }
+
+    fn _exit_reentrancy_guard(env: Env) {
+        env.storage().instance().set(&MarketplaceDataKey::ReentrancyGuard, &false);
     }
 
     fn require_admin(env: Env) {
