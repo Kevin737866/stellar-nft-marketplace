@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react'
 import { WalletConnect } from 'stellar-wallet-connect'
+import { stellarService } from '@/lib/stellar'
 
 interface WalletContextType {
   wallet: WalletConnect | null
@@ -25,6 +26,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         projectId: process.env.NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID || '',
       })
       setWallet(walletConnect)
+      stellarService.setWallet(walletConnect)
     }
 
     initWallet()

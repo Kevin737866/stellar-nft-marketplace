@@ -2,6 +2,8 @@
 
 import { useState } from 'react'
 import { useWallet } from '@/components/WalletProvider'
+import { useToast } from '@/components/Toast'
+import { stellarService } from '@/lib/stellar'
 import { Upload, X, Plus } from 'lucide-react'
 
 export default function MintPage() {
@@ -13,6 +15,8 @@ export default function MintPage() {
   const [attributes, setAttributes] = useState<{ trait_type: string; value: string }[]>([])
   const [newAttribute, setNewAttribute] = useState({ trait_type: '', value: '' })
   const [isMinting, setIsMinting] = useState(false)
+  const [mintingStep, setMintingStep] = useState<'uploading' | 'minting' | 'confirming' | null>(null)
+  const { addToast, removeToast } = useToast()
 
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -37,39 +41,214 @@ export default function MintPage() {
     setAttributes(attributes.filter((_, i) => i !== index))
   }
 
+  const uploadToIPFS = async (file: File): Promise<{ cid: string; url: string }> => {
+    const formData = new FormData()
+    formData.append('file', file)
+    
+    const response = await fetch('/api/upload', {
+      method: 'POST',
+      body: formData
+    })
+    
+    if (!response.ok) {
+      const error = await response.json()
+      throw new Error(error.error || 'Failed to upload to IPFS')
+    }
+    
+    return response.json()
+  }
+
+  const uploadMetadataToIPFS = async (metadata: any): Promise<{ cid: string; url: string }> => {
+    const response = await fetch('/api/upload', {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ metadata })
+    })
+    
+    if (!response.ok) {
+      const error = await response.json()
+      throw new Error(error.error || 'Failed to upload metadata to IPFS')
+    }
+    
+    return response.json()
+  }
+
+  const pollTransactionStatus = async (txHash: string, maxAttempts = 15): Promise<boolean> => {
+    for (let i = 0; i < maxAttempts; i++) {
+      try {
+        const status = await stellarService.getTransactionStatus(txHash)
+        
+        if (status === 'success') {
+          return true
+        } else if (status === 'error') {
+          return false
+        }
+        
+        // Wait 2 seconds before polling again
+        await new Promise(resolve => setTimeout(resolve, 2000))
+      } catch (error) {
+        console.error('Polling error:', error)
+      }
+    }
+    
+    return false
+  }
+
   const handleMint = async () => {
     if (!isConnected || !address) {
-      alert('Please connect your wallet first')
+      addToast({
+        type: 'error',
+        title: 'Wallet Not Connected',
+        message: 'Please connect your wallet first'
+      })
       return
     }
 
     if (!name || !description || !image) {
-      alert('Please fill in all required fields')
+      addToast({
+        type: 'error',
+        title: 'Missing Information',
+        message: 'Please fill in all required fields'
+      })
       return
     }
 
     setIsMinting(true)
+    let loadingToastId: string | null = null
     
     try {
-      // TODO: Implement actual minting logic
-      // 1. Upload image to IPFS
-      // 2. Create metadata JSON
-      // 3. Upload metadata to IPFS
-      // 4. Call smart contract mint function
+      // Step 1: Upload image to IPFS
+      setMintingStep('uploading')
+      loadingToastId = addToast({
+        type: 'loading',
+        title: 'Uploading Image',
+        message: 'Uploading your image to IPFS...',
+        duration: 0
+      }).id
       
-      await new Promise(resolve => setTimeout(resolve, 3000)) // Simulate minting
+      const imageUpload = await uploadToIPFS(image)
       
-      alert('NFT minted successfully!')
-      setName('')
-      setDescription('')
-      setImage(null)
-      setPreview('')
-      setAttributes([])
+      if (loadingToastId) {
+        removeToast(loadingToastId)
+      }
+      
+      addToast({
+        type: 'success',
+        title: 'Image Uploaded',
+        message: 'Image successfully uploaded to IPFS'
+      })
+
+      // Step 2: Create and upload metadata
+      const metadata = {
+        name,
+        description,
+        image: imageUpload.url,
+        attributes: attributes.map(attr => ({
+          trait_type: attr.trait_type,
+          value: attr.value
+        }))
+      }
+      
+      loadingToastId = addToast({
+        type: 'loading',
+        title: 'Uploading Metadata',
+        message: 'Uploading metadata to IPFS...',
+        duration: 0
+      }).id
+      
+      const metadataUpload = await uploadMetadataToIPFS(metadata)
+      
+      if (loadingToastId) {
+        removeToast(loadingToastId)
+      }
+      
+      addToast({
+        type: 'success',
+        title: 'Metadata Uploaded',
+        message: 'Metadata successfully uploaded to IPFS'
+      })
+
+      // Step 3: Mint NFT on blockchain
+      setMintingStep('minting')
+      const tokenId = await stellarService.getNextTokenId()
+      
+      loadingToastId = addToast({
+        type: 'loading',
+        title: 'Minting NFT',
+        message: 'Please confirm the transaction in your wallet...',
+        duration: 0
+      }).id
+      
+      const txHash = await stellarService.mintNFT({
+        to: address,
+        tokenId,
+        metadataUri: metadataUpload.url,
+        metadata
+      })
+      
+      if (loadingToastId) {
+        removeToast(loadingToastId)
+      }
+      
+      addToast({
+        type: 'success',
+        title: 'Transaction Submitted',
+        message: `Transaction hash: ${txHash.slice(0, 10)}...`
+      })
+
+      // Step 4: Wait for confirmation
+      setMintingStep('confirming')
+      loadingToastId = addToast({
+        type: 'loading',
+        title: 'Confirming Transaction',
+        message: 'Waiting for blockchain confirmation...',
+        duration: 0
+      }).id
+      
+      const confirmed = await pollTransactionStatus(txHash)
+      
+      if (loadingToastId) {
+        removeToast(loadingToastId)
+      }
+      
+      if (confirmed) {
+        addToast({
+          type: 'success',
+          title: 'NFT Minted Successfully!',
+          message: `Your NFT "${name}" has been minted successfully!`
+        })
+        
+        // Reset form
+        setName('')
+        setDescription('')
+        setImage(null)
+        setPreview('')
+        setAttributes([])
+      } else {
+        addToast({
+          type: 'error',
+          title: 'Transaction Failed',
+          message: 'The transaction could not be confirmed. Please try again.'
+        })
+      }
+      
     } catch (error) {
       console.error('Minting failed:', error)
-      alert('Minting failed. Please try again.')
+      
+      if (loadingToastId) {
+        removeToast(loadingToastId)
+      }
+      
+      addToast({
+        type: 'error',
+        title: 'Minting Failed',
+        message: error instanceof Error ? error.message : 'An unexpected error occurred'
+      })
     } finally {
       setIsMinting(false)
+      setMintingStep(null)
     }
   }
 
@@ -208,7 +387,19 @@ export default function MintPage() {
               disabled={isMinting || !name || !description || !image}
               className="px-8 py-3 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
             >
-              {isMinting ? 'Minting...' : 'Mint NFT'}
+              {isMinting ? (
+                <span className="flex items-center space-x-2">
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                  <span>
+                    {mintingStep === 'uploading' && 'Uploading...'}
+                    {mintingStep === 'minting' && 'Minting...'}
+                    {mintingStep === 'confirming' && 'Confirming...'}
+                    {!mintingStep && 'Processing...'}
+                  </span>
+                </span>
+              ) : (
+                'Mint NFT'
+              )}
             </button>
           </div>
         </div>
