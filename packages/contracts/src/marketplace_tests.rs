@@ -22,26 +22,22 @@ mod tests {
 
         // Initialize contracts
         MarketplaceContract::initialize(env.clone(), admin.clone());
-        NFTContract::initialize(env.clone(), admin.clone());
+        NFTContract::initialize(
+            env.clone(), 
+            admin.clone(),
+            String::from_str(&env, "Test NFT Collection"),
+            String::from_str(&env, "TNFT"),
+        );
 
         (marketplace_contract_id, nft_contract_id, seller, buyer)
     }
 
-    fn mint_nft(env: &Env, nft_contract_id: &Address, admin: &Address, to: &Address, token_id: u32) {
-        let metadata = Metadata {
-            name: String::from_str(&env, "Test NFT"),
-            description: String::from_str(&env, "A test NFT"),
-            image: String::from_str(&env, "https://example.com/image.png"),
-            attributes: Vec::new(&env),
-        };
-
+    fn mint_nft(env: &Env, nft_contract_id: &Address, admin: &Address, to: &Address, metadata_uri: String) -> u32 {
         NFTContract::mint(
             env.clone(),
             to.clone(),
-            token_id,
-            String::from_str(&env, "https://example.com/metadata.json"),
-            metadata,
-        );
+            metadata_uri,
+        )
     }
 
     #[test]
@@ -79,23 +75,18 @@ mod tests {
         let nft_contract_id = env.register_contract(None, NFTContract {});
 
         // Initialize NFT contract
-        NFTContract::initialize(env.clone(), admin.clone());
+        NFTContract::initialize(
+            env.clone(), 
+            admin.clone(),
+            String::from_str(&env, "Test NFT Collection"),
+            String::from_str(&env, "TNFT"),
+        );
 
         // Mint NFT
-        let token_id = 1u32;
-        let metadata = Metadata {
-            name: String::from_str(&env, "Test NFT"),
-            description: String::from_str(&env, "A test NFT"),
-            image: String::from_str(&env, "https://example.com/image.png"),
-            attributes: Vec::new(&env),
-        };
-
-        NFTContract::mint(
+        let token_id = NFTContract::mint(
             env.clone(),
             user.clone(),
-            token_id,
             String::from_str(&env, "https://example.com/metadata.json"),
-            metadata,
         );
 
         // Verify ownership
